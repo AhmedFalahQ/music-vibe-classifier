@@ -1,6 +1,7 @@
 # 🎵 Music Vibe Classifier — Image2Genre Recommender
 
 This project predicts a music genre from an image using a deep learning model trained with **Amazon SageMaker**. It then recommends **YouTube playlists** (Original & Khaleeji) that match the image's vibe.
+
 ---
 
 ## 🚀 Features
@@ -131,7 +132,9 @@ lambda_function_name=your-lambda-name
 ## 👤 Acknowledgments
 
 > This project was designed and implemented by **Ahmed Alqahtani**.
+> 
 > 🧵 *The frontend (Flask + HTML/CSS) and some AWS automation tasks were developed with the help of ChatGPT as a coding assistant*.
+> 
 > ChatGPT was instrumental in helping troubleshoot, structure, and speed up development across the UI, backend, and cloud integration. All architectural decisions, testing, and deployment were done independently.
 
 ---
