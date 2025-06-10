@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
+*.cache
 # Model and encoder files
 *.pth
 *.pkl
