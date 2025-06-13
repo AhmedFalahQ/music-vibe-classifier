@@ -1,17 +1,18 @@
+import boto3
+import base64
 import os
 import io
-import torch
 import requests
-import joblib
 import random
-import boto3
-from PIL import Image
-from flask import Flask, request, render_template
-from torchvision import models, transforms
-import base64
 from dotenv import load_dotenv
-from utils.aws_utils import invoke_lambda_to_store_image
 
+from torchvision import models, transforms
+import torch
+import joblib
+import imageio.v3 as iio
+from PIL import Image, UnidentifiedImageError
+from flask import Flask, request, render_template
+from utils.aws_utils import invoke_lambda_to_store_image
 
 
 app = Flask(__name__)
@@ -131,10 +132,22 @@ preprocess = transforms.Compose([
                         std=[0.229, 0.224, 0.225]),
 ])
 
+def load_image(image_bytes):
+    try:
+        # Try with Pillow first
+        return Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except UnidentifiedImageError:
+        try:
+            # Try using imageio (supports HEIC with pyav)
+            img_array = iio.imread(image_bytes)
+            return Image.fromarray(img_array).convert("RGB")
+        except Exception as err:
+            print(f"HEIC fallback failed: {err}")
+            raise ValueError("Unsupported or corrupt image format.")
 
 # Prediction function 
 def predict(image_bytes):
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    image = load_image(image_bytes)
     input_tensor = preprocess(image).unsqueeze(0)
     with torch.no_grad():
         output = model(input_tensor)
