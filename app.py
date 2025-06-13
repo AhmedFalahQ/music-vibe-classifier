@@ -1,22 +1,25 @@
 import os
 import io
-import torch
 import requests
-import joblib
-import random
-import boto3
-from PIL import Image
-from flask import Flask, request, render_template
-from torchvision import models, transforms
+import json
 import base64
+import random
 from dotenv import load_dotenv
+import boto3
+from flask import Flask, request, render_template
+
+import torch
+import joblib
+from PIL import Image
+from torchvision import models, transforms
 from utils.aws_utils import invoke_lambda_to_store_image
 
 
 
 app = Flask(__name__)
+
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
-load_dotenv(dotenv_path) # Load variables from .env file
+load_dotenv(dotenv_path)  # Load Enviroment variables from .env file
 
 
 
@@ -34,8 +37,8 @@ def get_secret(secret_name):
 
 # Load config from AWS
 try:
-    YOUTUBE_API_KEY = get_secret("youtube/api_key")
-    secrets=get_secret("app/keys")
+    YOUTUBE_API_KEY = dict.get(json.loads(get_secret("youtube/api_key")),"api_key")
+    secrets=json.loads(get_secret("app/keys"))
     bucket_name=secrets.get("bucket_name")
     lambda_function_name=secrets.get("lambda_function_name")
 except:
@@ -86,8 +89,10 @@ GENRE_DESCRIPTIONS = {
         "text": "powerful and raw, often associated with bold textures, rebellious energy, and strong emotions"
     }
 }
+
 def get_playlist_tracks(playlist_id, api_key, max_results=50):
     """Fetch tracks from a YouTube playlist"""
+
     url = "https://www.googleapis.com/youtube/v3/playlistItems"
     params = {
         "key": api_key,
@@ -131,7 +136,6 @@ preprocess = transforms.Compose([
                         std=[0.229, 0.224, 0.225]),
 ])
 
-
 # Prediction function 
 def predict(image_bytes):
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -171,7 +175,7 @@ def index():
                 num_original_samples = min(10, len(all_original_tracks))
                 original_tracks = random.sample(all_original_tracks, num_original_samples) if all_original_tracks else []
                 
-                #Fetch ALL available tracks from the khaleeji playlist
+                # Fetch ALL available tracks from the khaleeji playlist
                 all_khaleeji_tracks = get_playlist_tracks(
                     PLAYLIST_MAP.get(prediction, {}).get("khaleeji", ""), 
                     YOUTUBE_API_KEY
