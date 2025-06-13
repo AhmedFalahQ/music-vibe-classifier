@@ -3,7 +3,7 @@ botocore
 cachetools
 cv
 Flask
-google-api-cor
+google-api-core
 google-api-python-client
 google-auth
 google-auth-httplib2
