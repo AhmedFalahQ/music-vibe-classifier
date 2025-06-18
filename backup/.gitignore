@@ -1,0 +1,25 @@
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Model and encoder files
+*.pth
+*.pkl
+
+# Environment files
+.env
+venv/
+.env.*
+
+# Logs
+*.log
+
+# System files
+.DS_Store
+Thumbs.db
+
+# AWS credentials
+*.pem
+.aws/
