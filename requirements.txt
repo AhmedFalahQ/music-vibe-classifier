@@ -38,3 +38,4 @@ torchaudio
 torchvision
 tqdm
 urllib3
+openai
