@@ -1,11 +1,15 @@
 # 🎵 Music Vibe Classifier — Image2Genre Recommender
 
-This project predicts a music genre from an image using a deep learning model trained with **Amazon SageMaker**. It then recommends **YouTube playlists** (Original & Khaleeji) that match the image's vibe.
+Image2Genre predicts the music genre that best matches an image’s visual vibe using a deep learning model trained with Amazon SageMaker. It then recommends curated YouTube playlists (both Global and Khaleeji) based on that genre.
+---
+It also uses Grad-CAM and GPT-4o to provide human-like explanations for its predictions.
 ---
 
 ## 🚀 Features
 
 * 🖼️ Upload an image → get a predicted **music genre**
+* 🔥 View a **Grad-CAM heatmap** highlighting areas the model focused on
+* 🧠 Get human-readable explanations via **GPT-4o** for both original and heatmapped images
 * 🤖 **ResNet34 model** trained in two phases (frozen & fine-tuned) using **SageMaker**
 * 📆 Predictions served via a **Flask app** on **EC2 Spot instance**
 * 🎵 Automatically fetches **YouTube playlists** for both global and local (Khaleeji) musical tastes
@@ -74,6 +78,15 @@ music-vibe-classifier/
 
 ---
 
+## 🧠 GPT-4o Explanations
+* **Original Image Caption + Justification**
+   The app uses GPT-4o to explain how the original image visually matches the predicted music genre.
+* **Grad-CAM Explanation**
+   A second GPT-4o call provides reasoning based on the heatmap, highlighting what the model "focused on" and why that supports the genre.
+* 💬 **Responses are structured using prompt engineering and returned in markdown for clarity.**
+
+---
+
 ## ☁️ AWS Services Used
 
 | Service             | Purpose                                        |
@@ -91,9 +104,11 @@ music-vibe-classifier/
 
 1. User uploads a photo.
 2. Flask app predicts genre using `model.pth`.
-3. YouTube playlists for Original + Khaleeji are shown.
-4. The image is sent to Lambda → stored in S3.
-5. The user can listen via embedded YouTube previews.
+3. Grad-CAM heatmap is generated.
+4. Two GPT-4o explanations are returned (original + heatmap).
+5. YouTube playlists for Original + Khaleeji are shown.
+6. The image is sent to Lambda → stored in S3.
+7. The user can listen via embedded YouTube previews.
 
 ---
 
@@ -105,10 +120,30 @@ music-vibe-classifier/
 * 🌟 Upload feedback to DynamoDB for model tuning
 
 ---
+## 🤝 Contributors and Contributions
+
+- **Ahmed AlQahtani**  
+  - ☁️ Handled all AWS-related development — including EC2 setup, Lambda, S3, and Secrets Manager
+  - 🧹 Collected and cleaned the dataset
+  - 🧪 Integrated and managed the training pipeline on Amazon SageMaker
+  - 🎵 Developed YouTube API features for playlist recommendations
+  - 🧱 Built core backend infrastructure and deployment flow
+
+- **Abdulmajeed AlSharafi**  
+  - 🔥 Implemented Grad-CAM heatmap visualization
+  - 🤖 Integrated GPT-4o explanations (original + Grad-CAM) into the app
+  - 🧠 Contributed significantly to **prompt engineering** and tuning GPT outputs
+  - 🛠️ Participated in major code reviews and architectural feedback
+
+- **Shared Tasks**  
+  - 🎨 Collaborated on UI planning and layout design
+  - 🧪 Conducted testing across features and edge cases
+  - 📝 Co-authored the documentation and README
+---
 
 ## 👤 Acknowledgments
 
-> This project was designed and implemented by **Ahmed Alqahtani**.
+> This project was designed and implemented by **Ahmed Alqahtani** and **Abdulmajeed Alsharafi**.
 >
 > 🧵 *The frontend (Flask + HTML/CSS) and some AWS automation tasks were developed with the help of AI tools as a coding assistants.*
 >
@@ -116,7 +151,8 @@ music-vibe-classifier/
 
 ---
 
-## 🎓 Author
+## 🎓 Authors
 
 **Ahmed AlQahtani** — [AhmedFalahQ (Ahmed AlQahtani)](https://github.com/AhmedFalahQ)
+**Abdulmajeed AlSharafi** — [AbdulmajeedAlsharafi (Abdulmajeed Alsharafi)](https://github.com/AbdulmajeedAlsharafi)
 #
