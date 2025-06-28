@@ -23,7 +23,7 @@ print(f"Using device: {device}")
 
 # SageMaker paths
 input_data_path = '/opt/ml/input/data/training/'
-csv_path = os.path.join(input_data_path, 'Train_12.csv')
+csv_path = os.path.join(input_data_path, 'the name of your dataset.csv') # replace with your value
 image_folder = input_data_path
 model_dir = '/opt/ml/model/'
 
@@ -43,8 +43,8 @@ class LocalImageDataset(Dataset):
         self.transform = transform
         self.label_encoder = label_encoder
         self.df = pd.read_csv(csv_path)
-        self.image_keys = self.df['image_path'].tolist()
-        self.labels = self.df['music_tag'].tolist()
+        self.image_keys = self.df['image_path'].tolist() # replace the name of column to yours
+        self.labels = self.df['music_tag'].tolist() # replace the name of class column to yours 
         if self.label_encoder:
             self.labels = self.label_encoder.transform(self.labels)
     def __len__(self):
@@ -80,10 +80,10 @@ val_transform = transforms.Compose([
 
 # Load CSV and encode labels
 label_encoder = LabelEncoder()
-encoded_labels = label_encoder.fit_transform(pd.read_csv(csv_path)['music_tag'])
+encoded_labels = label_encoder.fit_transform(pd.read_csv(csv_path)['music_tag']) # replace the name of class column to yours 
 num_classes = len(label_encoder.classes_)
 joblib.dump(label_encoder, 'label_encoder.pkl')
-boto3.client('s3').upload_file('label_encoder.pkl', 'proj-bucket-01', 'data/label_encoder.pkl')
+boto3.client('s3').upload_file('label_encoder.pkl', 'your bucket name', 'data/label_encoder.pkl') # replace with your true bucket name
 
 # Dataset and Dataloaders
 full_dataset = LocalImageDataset(csv_path, image_folder, label_encoder=label_encoder)
