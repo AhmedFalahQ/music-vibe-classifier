@@ -16,6 +16,7 @@ from utils.aws_utils import invoke_lambda_to_store_image
 import translations as tr
 import numpy as np
 import cv2
+import threading
 from openai import OpenAI
 
 app = Flask(__name__)
@@ -124,22 +125,13 @@ preprocess = transforms.Compose([
                         std=[0.229, 0.224, 0.225]),
 ])
 
-gradients = None # For heatmap generation
-activations = None # For heatmap generation
+TARGET_LAYER = model.layer4[2].conv2  # The last conv layer in resnet34
 
-def save_grad(module, grad_input, grad_output):
-    '''For saving gradients of a layer'''
-    global gradients
-    gradients = grad_output[0]
-
-def save_act(module, input, output):
-    '''For saving output of a layer'''
-    global activations
-    activations = output
-
-target_layer = model.layer4[2].conv2 # The last conv layer in resnet34
-model.layer4[2].conv2.register_forward_hook(save_act) # forward hook for outputs
-model.layer4[2].conv2.register_backward_hook(save_grad) # backward hook for gradients
+# Grad-CAM needs an activation and its gradient from the same pass. Flask serves
+# requests on threads and they all share this one model, so both the capture and
+# the backward pass have to be serialised: backward() also accumulates into the
+# model's parameter .grad buffers, which two threads cannot do at once.
+_cam_lock = threading.Lock()
 
 def load_image(image_bytes):
     try:
@@ -155,21 +147,46 @@ def load_image(image_bytes):
             raise ValueError("Unsupported or corrupt image format.")
 
 def generate_heatmap(input_tensor, class_idx):
-    model.zero_grad()
-    output = model(input_tensor) # Forward pass
-    score = output[0, class_idx]
-    score.backward() # Backward pass
+    """Grad-CAM over the last conv layer, as an H x W float array in [0, 1]."""
+    captured = {}
 
-    '''Heatmap Computation'''
-    pooled_grad = torch.mean(gradients, dim=[0, 2, 3])
-    for i in range(activations.shape[1]):
-        activations[:, i, :, :] *= pooled_grad[i]
+    def save_act(_module, _inputs, output):
+        captured["activations"] = output.detach()
 
-    heatmap = torch.mean(activations, dim=1).squeeze()
-    heatmap = torch.nn.functional.relu(heatmap) # All positive values
-    heatmap /= torch.max(heatmap) # normalize
+    def save_grad(_module, _grad_input, grad_output):
+        captured["gradients"] = grad_output[0].detach()
 
-    return heatmap.detach().numpy()
+    with _cam_lock:
+        forward_handle = TARGET_LAYER.register_forward_hook(save_act)
+        # register_full_backward_hook, not the deprecated register_backward_hook,
+        # which is documented to report wrong gradients for some modules.
+        backward_handle = TARGET_LAYER.register_full_backward_hook(save_grad)
+        try:
+            model.zero_grad(set_to_none=True)
+            output = model(input_tensor)          # Forward pass
+            output[0, class_idx].backward()       # Backward pass
+        finally:
+            # Always unhook: a leaked hook would fire on every later request.
+            forward_handle.remove()
+            backward_handle.remove()
+            model.zero_grad(set_to_none=True)
+
+    activations = captured.get("activations")
+    gradients = captured.get("gradients")
+    if activations is None or gradients is None:
+        raise RuntimeError("Grad-CAM captured nothing from the target layer")
+
+    # Channel weights are the spatially averaged gradients. Combined
+    # out-of-place: the old code multiplied into the captured activation
+    # tensor itself, which mutated a tensor autograd still referenced.
+    weights = gradients.mean(dim=(2, 3), keepdim=True)
+    heatmap = torch.relu((weights * activations).sum(dim=1)).squeeze(0)
+
+    peak = torch.max(heatmap)
+    if peak <= 0:
+        # Nothing in the image argued for this class; dividing here gave NaN.
+        return np.zeros(tuple(heatmap.shape), dtype=np.float32)
+    return (heatmap / peak).numpy()
 
 def overlay_heatmap(heatmap, img, alpha=0.5):
     heatmap = cv2.resize(heatmap, (img.size[0], img.size[1]))
@@ -262,10 +279,6 @@ def predict(image_bytes, lang="en"):
         distribution = build_distribution(probs, predicted_idx, lang)
         heatmap = generate_heatmap(input_tensor, predicted_idx)
         cam_image = overlay_heatmap(heatmap, image)
-
-        global gradients, activations # Reset to avoid polluting
-        gradients = None
-        activations = None
 
         cam_pil = Image.fromarray(cam_image)
         buf = io.BytesIO()
