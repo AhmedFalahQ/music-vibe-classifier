@@ -1,102 +1,298 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang }}" dir="{{ direction }}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Image2Genre - Music Genre Discovery</title>
-  
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@500;700&family=Rubik:wght@500&display=swap" rel="stylesheet">
+  <title>{{ t.page_title }}</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
-<body>
-  <div class="container">
-    <div class="bg-white rounded shadow p-4 mb-4 text-center">
-      <h1 class="mb-4">Image2Genre - Music Genre Discovery</h1>
-      <form method="POST" enctype="multipart/form-data" class="d-flex flex-column align-items-center">
-        <input type="file" name="image" accept="image/*" required class="form-control mb-3" style="max-width: 400px;">
-        <button type="submit" class="btn btn-primary">Discover Music</button>
-      </form>
-      {% if image_data and gradcam_data %}
-<div class="d-flex justify-content-center gap-4 flex-wrap my-4">
-  <div class="text-center" style="max-width: 45%;">
-    <p><strong>Original image:</strong></p>
-    <img src="data:image/jpeg;base64,{{ image_data }}" alt="Uploaded Image" class="uploaded-image img-fluid rounded mb-2" style="max-width: 100%; height: auto;">
-    {% if original_text %}
-    <p><strong>The description:</strong> {{ original_text }}</p>
+<body style="--accent: {{ accent }}" data-lang="{{ lang }}">
+
+<header class="topbar">
+  <a class="brand" href="{{ url_for('index', lang=lang) }}">
+    <svg class="brand__mark" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <circle cx="10" cy="10" r="7.2" stroke="var(--accent)" stroke-width="1.6"></circle>
+      <path d="M10 2.8 A7.2 7.2 0 0 1 10 17.2" fill="var(--accent)"></path>
+      <circle cx="10" cy="10" r="1.9" fill="var(--bg)"></circle>
+    </svg>
+    <!-- Drop your logo here: an inline <svg> with fill="currentColor" blends
+         with the dark theme; replace .brand__mark above. -->
+    <span class="brand__name">{{ t.brand }}</span>
+  </a>
+
+  <div class="topbar__end">
+    <span class="chip-mono">{{ t.model_chip }}</span>
+    <span class="rule" aria-hidden="true"></span>
+    <a class="lang" href="{{ url_for('index', lang=other_lang) }}" title="{{ t.lang_other_label }}"
+       aria-label="{{ t.lang_other_label }}">{{ t.lang_other }}</a>
+    {% if prediction %}
+      <span class="rule" aria-hidden="true"></span>
+      <a class="btn-ghost" href="{{ url_for('index', lang=lang) }}">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 11V3"></path><path d="M4.8 6.2 8 3l3.2 3.2"></path>
+          <path d="M2.8 11v1.6a1.2 1.2 0 0 0 1.2 1.2h8a1.2 1.2 0 0 0 1.2-1.2V11"></path>
+        </svg>
+        {{ t.new_image }}
+      </a>
     {% endif %}
   </div>
-  <div class="text-center" style="max-width: 45%;">
-    <p><strong>Grad-CAM image:</strong></p>
-    <img src="data:image/jpeg;base64,{{ gradcam_data }}" alt="Grad-CAM Image" class="uploaded-image img-fluid rounded mb-2" style="max-width: 100%; height: auto;">
-    {% if grad_text %}
-    <p><strong>Model explainability:</strong> {{ grad_text }}</p>
+</header>
+
+{% if error %}
+  <div class="alert" role="alert">
+    <strong>{{ t.error }}</strong>
+    <span>{{ error }}</span>
+  </div>
+{% endif %}
+
+{% if prediction %}
+{# ------------------------------- RESULTS ------------------------------- #}
+<main class="results">
+
+  <section class="stage">
+    <div class="frames" data-frame="source">
+      <div class="frames__tabs" role="tablist">
+        <button class="frames__tab is-active" type="button" data-show="source" role="tab"
+                aria-selected="true">{{ t.source }}</button>
+        <button class="frames__tab" type="button" data-show="cam" role="tab"
+                aria-selected="false">{{ t.attention }}</button>
+      </div>
+
+      <figure class="frame" data-kind="source">
+        <figcaption class="frame__label">
+          <span class="dot" aria-hidden="true"></span>{{ t.source }}
+        </figcaption>
+        <div class="frame__media">
+          <img src="data:image/jpeg;base64,{{ image_data }}" alt="{{ t.source }}">
+        </div>
+        <div class="frame__meta">
+          <span>{{ t.normalized }}</span>
+        </div>
+      </figure>
+
+      <figure class="frame" data-kind="cam">
+        <figcaption class="frame__label frame__label--accent">
+          <span class="dot dot--accent" aria-hidden="true"></span>{{ t.attention }}
+        </figcaption>
+        <div class="frame__media">
+          {% if gradcam_data %}
+            <img src="data:image/jpeg;base64,{{ gradcam_data }}" alt="{{ t.attention }}">
+          {% endif %}
+          <div class="scale" aria-hidden="true">
+            <span>{{ t.low }}</span>
+            <i class="scale__bar"></i>
+            <span>{{ t.high }}</span>
+          </div>
+        </div>
+        <div class="frame__meta">
+          <span class="mono">Grad-CAM</span>
+          <span class="sep" aria-hidden="true"></span>
+          <span class="mono">layer4.2.conv2</span>
+          <span class="sep" aria-hidden="true"></span>
+          <span class="mono">&alpha; 0.50</span>
+        </div>
+      </figure>
+    </div>
+
+    <aside class="verdict">
+      <span class="eyebrow">{{ t.predicted_vibe }}</span>
+      <h1 class="verdict__genre">{{ genre_label }}</h1>
+      {% if prediction_info %}<p class="verdict__desc">{{ prediction_info }}</p>{% endif %}
+
+      {% if distribution %}
+      <div class="dist">
+        <span class="eyebrow">{{ t.distribution }}</span>
+        <ul class="dist__list">
+          {% for row in distribution %}
+          <li class="dist__row{% if row.is_top %} is-top{% endif %}">
+            <span class="dist__name">{{ row.label }}</span>
+            <span class="dist__track"><i style="width: {{ row.pct }}%"></i></span>
+            <span class="dist__pct">{{ row.pct }}%</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      <hr class="hr">
+
+      <div class="explain">
+        {% if original_text %}
+        <div class="explain__block">
+          <span class="eyebrow">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M1.6 8s2.4-4.2 6.4-4.2S14.4 8 14.4 8s-2.4 4.2-6.4 4.2S1.6 8 1.6 8Z"></path>
+              <circle cx="8" cy="8" r="1.9"></circle>
+            </svg>
+            {{ t.what_image_shows }}
+          </span>
+          <p>{{ original_text }}</p>
+        </div>
+        {% endif %}
+
+        {% if grad_text %}
+        <div class="explain__block explain__block--accent">
+          <span class="eyebrow">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="8" cy="8" r="5.4"></circle><circle cx="8" cy="8" r="1.6"></circle>
+              <path d="M8 .9v2.2M8 12.9v2.2M.9 8h2.2M12.9 8h2.2"></path>
+            </svg>
+            {{ t.why_model_said }}
+          </span>
+          <p>{{ grad_text }}</p>
+        </div>
+        {% endif %}
+      </div>
+    </aside>
+  </section>
+
+  <section class="rail" data-tab="original">
+    <div class="rail__head">
+      <div class="rail__title">
+        <h2>{{ t.sounds_like }}</h2>
+        <span class="chip-mono">{{ t.tracks_count.replace('{count}', track_total|string) }}</span>
+      </div>
+      <div class="rail__controls">
+        <div class="seg" role="tablist">
+          <button class="seg__btn is-active" type="button" data-tab="original" role="tab"
+                  aria-selected="true">{{ t.tab_global }}</button>
+          <button class="seg__btn" type="button" data-tab="khaleeji" role="tab"
+                  aria-selected="false">{{ t.tab_khaleeji }}</button>
+        </div>
+        <div class="arrows">
+          <button class="arrow" type="button" data-scroll="back" aria-label="{{ t.prev }}">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.6 3.6 5.2 8l4.4 4.4"></path></svg>
+          </button>
+          <button class="arrow" type="button" data-scroll="forward" aria-label="{{ t.next }}">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.4 3.6 10.8 8l-4.4 4.4"></path></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    {% if original_tracks or khaleeji_tracks %}
+      {% for group, tracks in [('original', original_tracks), ('khaleeji', khaleeji_tracks)] %}
+      <div class="rail__strip" data-group="{{ group }}">
+        {% for track in tracks %}
+        <article class="card">
+          {# The iframe is not mounted until the poster is clicked: 20 live
+             YouTube embeds is the single biggest cost on this page. #}
+          <button class="card__poster" type="button" data-video="{{ track.video_id }}"
+                  aria-label="{{ track.title }}">
+            <img src="{{ track.thumbnail }}" alt="" loading="lazy">
+            <span class="card__play" aria-hidden="true">
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M3.4 2.2 9.4 6l-6 3.8Z"></path></svg>
+            </span>
+          </button>
+          <div class="card__body">
+            <a class="card__title" href="{{ track.url }}" target="_blank" rel="noopener noreferrer"
+               title="{{ t.watch_on_youtube }}">{{ track.title }}</a>
+            <span class="card__channel">{{ track.artist }}</span>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    {% else %}
+      <p class="muted">{{ t.no_playlists }}</p>
     {% endif %}
+
+    <p class="rail__note">{{ t.embed_note }}</p>
+  </section>
+</main>
+
+{% else %}
+{# ------------------------------- LANDING ------------------------------- #}
+<main class="landing">
+  <div class="landing__copy">
+    <span class="eyebrow eyebrow--accent">{{ t.hero_eyebrow }}</span>
+    <h1 class="hero">{{ t.hero_title }}</h1>
+    <p class="hero__body">{{ t.hero_body }}</p>
+
+    <div class="vibes">
+      <span class="eyebrow">{{ t.five_vibes }}</span>
+      <ul class="vibes__list">
+        {% for key, label in genre_chips %}
+        <li class="vibe"><span class="vibe__dot" style="background: {{ genre_accents[key] }}"></span>{{ label }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <form class="drop" method="POST" enctype="multipart/form-data" id="upload-form">
+    <input type="hidden" name="lang" value="{{ lang }}">
+    <label class="drop__zone" for="image-input" id="dropzone">
+      <span class="drop__icon" aria-hidden="true">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="3"></rect>
+          <circle cx="8.6" cy="8.6" r="1.7"></circle>
+          <path d="M3.4 16.2 8.2 11.6l4.1 3.9 3.2-2.7 5.1 4.6"></path>
+        </svg>
+      </span>
+      <span class="drop__title">{{ t.drop_here }}</span>
+      <span class="drop__or">{{ t.or }}</span>
+      <span class="btn-primary">{{ t.choose_file }}</span>
+      <span class="drop__formats">
+        <span class="mono">JPG</span><i class="sep"></i><span class="mono">PNG</span>
+        <i class="sep"></i><span class="mono">HEIC</span><i class="sep"></i><span class="mono">WEBP</span>
+      </span>
+      <input id="image-input" type="file" name="image" accept="image/*" required hidden>
+    </label>
+
+    <button class="btn-primary btn-primary--wide" type="submit" id="submit-btn" hidden>{{ t.analyze }}</button>
+
+    <p class="drop__privacy">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M8 1.8 13.4 4v4c0 3.2-2.2 5.4-5.4 6.2C4.8 13.4 2.6 11.2 2.6 8V4Z"></path>
+      </svg>
+      {{ t.privacy }}
+    </p>
+  </form>
+</main>
+{% endif %}
+
+{# The analyzing view. Shown by app.js the moment the form is submitted, so the
+   5-10s round trip is never a blank screen. Step timings are estimates, not
+   real progress — the server returns finished HTML in one response. #}
+<div class="analyzing" id="analyzing" hidden aria-live="polite">
+  <div class="analyzing__inner">
+    <div class="analyzing__preview">
+      <div class="frame__media">
+        <img id="analyzing-image" alt="">
+        <span class="scanline" aria-hidden="true"></span>
+      </div>
+    </div>
+    <div class="analyzing__panel">
+      <span class="eyebrow">{{ t.reading_image }}</span>
+      <h2 class="analyzing__title">{{ t.listening }}</h2>
+
+      <div class="progress"><i id="progress-fill"></i></div>
+
+      <ol class="steps" id="steps">
+        <li class="step"><span class="step__mark"></span>
+          <span class="step__text"><b>{{ t.step_1 }}</b><em>{{ t.step_1_sub }}</em></span></li>
+        <li class="step"><span class="step__mark"></span>
+          <span class="step__text"><b>{{ t.step_2 }}</b><em>{{ t.step_2_sub }}</em></span></li>
+        <li class="step"><span class="step__mark"></span>
+          <span class="step__text"><b>{{ t.step_3 }}</b><em>{{ t.step_3_sub }}</em></span></li>
+        <li class="step"><span class="step__mark"></span>
+          <span class="step__text"><b>{{ t.step_4 }}</b><em>{{ t.step_4_sub }}</em></span></li>
+      </ol>
+    </div>
   </div>
 </div>
-{% endif %}
-    </div>
 
-    {% if error %}
-    <div class="error-message">{{ error }}</div>
-    {% endif %}
-
-    {% if prediction or videos %}
-    <div class="bg-white rounded shadow p-4">
-      {% if prediction %}
-        <h3>Predicted Vibe: <span class="genre-tag">{{ prediction }}</span></h3>
-
-        {% if prediction_info %}
-        <p class="fst-italic text-muted">This image evokes a vibe that is: <strong>{{ prediction_info }}</strong></p>
-        {% endif %}
-        <div class="info-message">
-          <p>Some videos may not be available for direct preview due to YouTube's embedding restrictions or geographical limitations. You can always watch them directly on the YouTube website.</p>
-      </div>
-      {% endif %}
-
-      {% if original_tracks %}
-      <h4 class="mt-4">Original Version</h4>
-      <div class="row g-4">
-        {% for track in original_tracks %}
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100 shadow-sm">
-            <img src="{{ track.thumbnail }}" class="card-img-top" alt="{{ track.title }}">
-            <div class="card-body">
-              <div class="video-title">{{ track.title }}</div>
-              <div class="video-channel">{{ track.artist }}</div>
-              <iframe class="mt-2 w-100" height="180" src="https://www.youtube.com/embed/{{ track.url.split('v=')[1] }}?autoplay=0&controls=1" frameborder="0" allowfullscreen></iframe>
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
-
-      {% if khaleeji_tracks %}
-      <h4 class="mt-4">Khaleeji Version</h4>
-      <div class="row g-4">
-        {% for track in khaleeji_tracks %}
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100 shadow-sm">
-            <img src="{{ track.thumbnail }}" class="card-img-top" alt="{{ track.title }}">
-            <div class="card-body">
-              <div class="video-title">{{ track.title }}</div>
-              <div class="video-channel">{{ track.artist }}</div>
-              <iframe class="mt-2 w-100" height="180" src="https://www.youtube.com/embed/{{ track.url.split('v=')[1] }}?autoplay=0&controls=1" frameborder="0" allowfullscreen></iframe>
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
-
-      {% if not original_tracks and not khaleeji_tracks %}
-      <p class="text-muted">No videos found for this genre.</p>
-      {% endif %}
-    </div>
-    {% endif %}
-  </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </body>
 </html>

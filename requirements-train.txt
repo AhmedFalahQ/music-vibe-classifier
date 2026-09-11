@@ -1,0 +1,10 @@
+# Training dependencies - for sagemaker/train.py and sagemaker/sagemaker.py.
+# Not needed to serve the app; install on the machine that launches training.
+-r requirements.txt
+
+pandas>=2.2,<4
+matplotlib>=3.8,<4
+
+# sagemaker/sagemaker.py does `from sagemaker.pytorch import PyTorch`, which
+# needs this SDK. It was missing from the dependency list entirely.
+sagemaker>=2.220,<4

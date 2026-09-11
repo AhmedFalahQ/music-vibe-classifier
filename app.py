@@ -13,8 +13,10 @@ import imageio.v3 as iio
 from PIL import Image, UnidentifiedImageError
 from flask import Flask, request, render_template
 from utils.aws_utils import invoke_lambda_to_store_image
+import translations as tr
 import numpy as np
 import cv2
+import threading
 from openai import OpenAI
 
 app = Flask(__name__)
@@ -76,25 +78,6 @@ PLAYLIST_MAP = {        # a map for playlist IDs of original and khaleeji songs 
     }
 }
 
-GENRE_DESCRIPTIONS = {      # a desciption for images that mapped for each genre
-    "classical": {
-        "text": "calm and inspiring, often associated with cool colors and timeless beauty"
-    },
-    "pop": {
-        "text": "energetic and vibrant, often associated with bright colors, catchy melodies, and modern trends"
-    },
-    "electronic": {
-        "text": "dynamic and futuristic, often associated with pulsating rhythms, abstract shapes, and synthetic sounds"
-    },
-    "jazz": {
-        "text": "sophisticated and smooth, often associated with warm tones, improvisation, and a relaxed atmosphere"
-    },
-    "rock": {
-        "text": "powerful and raw, often associated with bold textures, rebellious energy, and strong emotions"
-    }
-}
-
-
 def get_playlist_tracks(playlist_id, api_key, max_results=50):
     """Fetch tracks from a YouTube playlist"""
 
@@ -114,6 +97,7 @@ def get_playlist_tracks(playlist_id, api_key, max_results=50):
                 "title": item["snippet"]["title"],
                 "artist": item["snippet"].get("videoOwnerChannelTitle", "Unknown Artist"),
                 "url": f"https://www.youtube.com/watch?v={item['snippet']['resourceId']['videoId']}",
+                "video_id": item['snippet']['resourceId']['videoId'],
                 "thumbnail": item["snippet"]["thumbnails"]["high"]["url"],
                 "type": "original" if "original" in playlist_id else "khaleeji"  # For UI differentiation
             }
@@ -141,22 +125,13 @@ preprocess = transforms.Compose([
                         std=[0.229, 0.224, 0.225]),
 ])
 
-gradients = None # For heatmap generation
-activations = None # For heatmap generation
+TARGET_LAYER = model.layer4[2].conv2  # The last conv layer in resnet34
 
-def save_grad(module, grad_input, grad_output):
-    '''For saving gradients of a layer'''
-    global gradients
-    gradients = grad_output[0]
-
-def save_act(module, input, output):
-    '''For saving output of a layer'''
-    global activations
-    activations = output
-
-target_layer = model.layer4[2].conv2 # The last conv layer in resnet34
-model.layer4[2].conv2.register_forward_hook(save_act) # forward hook for outputs
-model.layer4[2].conv2.register_backward_hook(save_grad) # backward hook for gradients
+# Grad-CAM needs an activation and its gradient from the same pass. Flask serves
+# requests on threads and they all share this one model, so both the capture and
+# the backward pass have to be serialised: backward() also accumulates into the
+# model's parameter .grad buffers, which two threads cannot do at once.
+_cam_lock = threading.Lock()
 
 def load_image(image_bytes):
     try:
@@ -172,21 +147,46 @@ def load_image(image_bytes):
             raise ValueError("Unsupported or corrupt image format.")
 
 def generate_heatmap(input_tensor, class_idx):
-    model.zero_grad()
-    output = model(input_tensor) # Forward pass
-    score = output[0, class_idx]
-    score.backward() # Backward pass
+    """Grad-CAM over the last conv layer, as an H x W float array in [0, 1]."""
+    captured = {}
 
-    '''Heatmap Computation'''
-    pooled_grad = torch.mean(gradients, dim=[0, 2, 3])
-    for i in range(activations.shape[1]):
-        activations[:, i, :, :] *= pooled_grad[i]
+    def save_act(_module, _inputs, output):
+        captured["activations"] = output.detach()
 
-    heatmap = torch.mean(activations, dim=1).squeeze()
-    heatmap = torch.nn.functional.relu(heatmap) # All positive values
-    heatmap /= torch.max(heatmap) # normalize
+    def save_grad(_module, _grad_input, grad_output):
+        captured["gradients"] = grad_output[0].detach()
 
-    return heatmap.detach().numpy()
+    with _cam_lock:
+        forward_handle = TARGET_LAYER.register_forward_hook(save_act)
+        # register_full_backward_hook, not the deprecated register_backward_hook,
+        # which is documented to report wrong gradients for some modules.
+        backward_handle = TARGET_LAYER.register_full_backward_hook(save_grad)
+        try:
+            model.zero_grad(set_to_none=True)
+            output = model(input_tensor)          # Forward pass
+            output[0, class_idx].backward()       # Backward pass
+        finally:
+            # Always unhook: a leaked hook would fire on every later request.
+            forward_handle.remove()
+            backward_handle.remove()
+            model.zero_grad(set_to_none=True)
+
+    activations = captured.get("activations")
+    gradients = captured.get("gradients")
+    if activations is None or gradients is None:
+        raise RuntimeError("Grad-CAM captured nothing from the target layer")
+
+    # Channel weights are the spatially averaged gradients. Combined
+    # out-of-place: the old code multiplied into the captured activation
+    # tensor itself, which mutated a tensor autograd still referenced.
+    weights = gradients.mean(dim=(2, 3), keepdim=True)
+    heatmap = torch.relu((weights * activations).sum(dim=1)).squeeze(0)
+
+    peak = torch.max(heatmap)
+    if peak <= 0:
+        # Nothing in the image argued for this class; dividing here gave NaN.
+        return np.zeros(tuple(heatmap.shape), dtype=np.float32)
+    return (heatmap / peak).numpy()
 
 def overlay_heatmap(heatmap, img, alpha=0.5):
     heatmap = cv2.resize(heatmap, (img.size[0], img.size[1]))
@@ -208,7 +208,7 @@ def compress_image(image, max_size=(512, 512)):
     image.thumbnail(max_size)
     return image
 
-def get_gpt4_explanation(image,genre,grad=False):
+def get_gpt4_explanation(image, genre, lang="en", grad=False):
     if grad is True:
         prompt = (
             "Look at this merged image of an original photo and its Grad-CAM heatmap. "
@@ -218,6 +218,10 @@ def get_gpt4_explanation(image,genre,grad=False):
     else:
         prompt = (
             f"Describe this image in one sentence, then explain why it fits the music genre '{genre}'in one sentence")
+
+    # Ask for the answer in the language the page is being viewed in.
+    prompt = f"{prompt} {tr.PROMPT_LANGUAGE.get(lang, tr.PROMPT_LANGUAGE['en'])}"
+
     buf = io.BytesIO()
     image.save(buf, format='JPEG')
     img_b64 = base64.b64encode(buf.getvalue()).decode()
@@ -237,23 +241,44 @@ def get_gpt4_explanation(image,genre,grad=False):
     )
     return response.choices[0].message.content
 
+def build_distribution(probs, predicted_idx, lang, top_n=3):
+    """Top-N classes as rows for the confidence bars.
+
+    Percentages are rounded independently, so they will not always sum to 100.
+    """
+    count = min(top_n, int(probs.shape[0]))
+    top = torch.topk(probs, count)
+    labels = tr.GENRE_LABELS.get(lang, tr.GENRE_LABELS["en"])
+
+    rows = []
+    for score, idx in zip(top.values.tolist(), top.indices.tolist()):
+        key = label_encoder.inverse_transform([idx])[0]
+        rows.append({
+            "key": key,
+            "label": labels.get(key, key),
+            "pct": round(score * 100),
+            "is_top": idx == predicted_idx,
+        })
+    return rows
+
+
 # Prediction function 
-def predict(image_bytes):
+def predict(image_bytes, lang="en"):
     try:
         image = load_image(image_bytes)
         input_tensor = preprocess(image).unsqueeze(0)
 
         with torch.no_grad():
             output = model(input_tensor)
-            predicted_idx = torch.argmax(output, dim=1).item()
+            # Keep the whole distribution, not just the winner: the UI shows
+            # the runner-up genres alongside the prediction.
+            probs = torch.softmax(output, dim=1)[0]
+            predicted_idx = int(torch.argmax(probs).item())
 
         predicted_label = label_encoder.inverse_transform([predicted_idx])[0]
+        distribution = build_distribution(probs, predicted_idx, lang)
         heatmap = generate_heatmap(input_tensor, predicted_idx)
         cam_image = overlay_heatmap(heatmap, image)
-
-        global gradients, activations # Reset to avoid polluting
-        gradients = None
-        activations = None
 
         cam_pil = Image.fromarray(cam_image)
         buf = io.BytesIO()
@@ -261,78 +286,93 @@ def predict(image_bytes):
         gradcam_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
 
         # Merge for GPT explanation
+        genre_for_prompt = tr.GENRE_LABELS.get(lang, tr.GENRE_LABELS["en"]).get(
+            predicted_label, predicted_label)
         merged = merge_images_side_by_side(image, cam_pil)
-        g_explanation = get_gpt4_explanation(compress_image(merged), predicted_label,grad=True)
-        o_explanation = get_gpt4_explanation(compress_image(image), predicted_label)
-        return predicted_label, gradcam_base64, g_explanation , o_explanation
+        g_explanation = get_gpt4_explanation(compress_image(merged), genre_for_prompt, lang, grad=True)
+        o_explanation = get_gpt4_explanation(compress_image(image), genre_for_prompt, lang)
+        return predicted_label, gradcam_base64, g_explanation, o_explanation, distribution
     except Exception as e:
         print("Prediction error:", e)
-        return "Error", None, None, None
+        return None, None, None, None, []
+
+def view_context(lang, **extra):
+    """Everything the template needs regardless of which state it renders."""
+    labels = tr.GENRE_LABELS[lang]
+    context = {
+        "lang": lang,
+        "direction": tr.DIRECTION[lang],
+        "other_lang": tr.other(lang),
+        "t": tr.UI[lang],
+        "accent": tr.FALLBACK_ACCENT,
+        "genre_accents": tr.GENRE_ACCENTS,
+        "genre_chips": [(key, labels[key]) for key in tr.GENRE_ACCENTS],
+        "prediction": None,
+        "error": None,
+    }
+    context.update(extra)
+    return context
+
+
+def sample_tracks(playlist_id, limit=10):
+    """Fetch a playlist and take a random handful of it."""
+    tracks = get_playlist_tracks(playlist_id, YOUTUBE_API_KEY) if playlist_id else []
+    return random.sample(tracks, min(limit, len(tracks))) if tracks else []
+
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    image_data = None
-    gradcam_data = None
+    # Language comes from the form on submit, the query string otherwise.
+    lang = tr.normalize(request.form.get("lang") or request.args.get("lang"))
 
     if request.method == "POST":
         file = request.files.get("image")
-        if file and file.filename:
-            try:
-                # Read and encode image for display
-                image_bytes = file.read()
-                image_data = base64.b64encode(image_bytes).decode('utf-8')
+        if not file or not file.filename:
+            return render_template("index.html", **view_context(lang))
 
-                # Call the lambda function invocation
-                invoke_lambda_to_store_image(image_bytes,bucket_name,lambda_function_name,region="us-east-1")
-                
-                prediction, gradcam_data, grad_text, original_text = predict(image_bytes)
-                prediction_desc = GENRE_DESCRIPTIONS.get(prediction, {
-                    "text": f"an intriguing mix, reminiscent of the {prediction} genre."
-                })
+        image_bytes = file.read()
+        image_data = base64.b64encode(image_bytes).decode("utf-8")
 
-                prediction_info = prediction_desc["text"]
-                
-                # Fetch ALL available tracks from the original playlist
-                all_original_tracks = get_playlist_tracks(
-                    PLAYLIST_MAP.get(prediction, {}).get("original", ""), 
-                    YOUTUBE_API_KEY
-                )
-                
-                # Random sample from the fetched tracks
-                num_original_samples = min(10, len(all_original_tracks))
-                original_tracks = random.sample(all_original_tracks, num_original_samples) if all_original_tracks else []
-                
-                # Fetch ALL available tracks from the khaleeji playlist
-                all_khaleeji_tracks = get_playlist_tracks(
-                    PLAYLIST_MAP.get(prediction, {}).get("khaleeji", ""), 
-                    YOUTUBE_API_KEY
-                )
-                
-                # Random sample from the fetched tracks
-                num_khaleeji_samples = min(10, len(all_khaleeji_tracks))
-                khaleeji_tracks = random.sample(all_khaleeji_tracks, num_khaleeji_samples) if all_khaleeji_tracks else []
-                
-                return render_template(
-                    "index.html",
-                    prediction=prediction,
-                    grad_text=grad_text,
-                    original_text=original_text,
-                    prediction_info=prediction_info,
-                    original_tracks=original_tracks,
-                    khaleeji_tracks=khaleeji_tracks,
-                    image_data=image_data,
-                    gradcam_data=gradcam_data,
-                    error=None if (original_tracks or khaleeji_tracks) else "No playlists found"
-                )
-                
-            except Exception as e:
-                return render_template(
-                    "index.html",
-                    error=f"Error processing image: {str(e)}",
-                    image_data=image_data
-                )
-    
-    return render_template("index.html")
+        try:
+            # Fire-and-forget: a storage failure must not cost the user their result.
+            invoke_lambda_to_store_image(
+                image_bytes, bucket_name, lambda_function_name, region="us-east-1")
+
+            prediction, gradcam_data, grad_text, original_text, distribution = predict(
+                image_bytes, lang)
+
+            if prediction is None:
+                return render_template("index.html", **view_context(
+                    lang, error=tr.UI[lang]["error"], image_data=image_data))
+
+            playlists = PLAYLIST_MAP.get(prediction, {})
+            original_tracks = sample_tracks(playlists.get("original"))
+            khaleeji_tracks = sample_tracks(playlists.get("khaleeji"))
+
+            return render_template("index.html", **view_context(
+                lang,
+                prediction=prediction,
+                genre_label=tr.GENRE_LABELS[lang].get(prediction, prediction),
+                prediction_info=tr.GENRE_DESCRIPTIONS[lang].get(prediction),
+                accent=tr.GENRE_ACCENTS.get(prediction, tr.FALLBACK_ACCENT),
+                distribution=distribution,
+                grad_text=grad_text,
+                original_text=original_text,
+                image_data=image_data,
+                gradcam_data=gradcam_data,
+                original_tracks=original_tracks,
+                khaleeji_tracks=khaleeji_tracks,
+                track_total=len(original_tracks) + len(khaleeji_tracks),
+                error=None if (original_tracks or khaleeji_tracks) else tr.UI[lang]["no_playlists"],
+            ))
+
+        except Exception as e:
+            print("Request error:", e)
+            return render_template("index.html", **view_context(
+                lang, error=str(e), image_data=image_data))
+
+    return render_template("index.html", **view_context(lang))
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
