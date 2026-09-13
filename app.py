@@ -223,6 +223,24 @@ def merge_images_side_by_side(img1, img2):
     merged.paste(img2, (img1.width, 0))
     return merged
 
+def encode_preview(image_bytes, max_edge=1600, quality=88):
+    """Base64 JPEG of the upload, for inlining into the page.
+
+    The raw file off a phone can be 10MB+, and every byte of it ends up inside
+    the HTML document at 4/3 size once base64-encoded. Downscaling costs nothing
+    visible at the size the page actually displays it.
+    """
+    try:
+        img = load_image(image_bytes)
+        img.thumbnail((max_edge, max_edge))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+    except Exception as e:
+        print(f"Preview encode failed, inlining the original: {e}")
+        return base64.b64encode(image_bytes).decode("utf-8")
+
+
 def compress_image(image, max_size=(512, 512)):
     image = image.convert("RGB")
     image.thumbnail(max_size)
@@ -314,8 +332,13 @@ def predict(image_bytes, lang="en"):
         cam_image = overlay_heatmap(heatmap, image)
 
         cam_pil = Image.fromarray(cam_image)
+        preview = cam_pil.copy()
+        preview.thumbnail((1600, 1600))
         buf = io.BytesIO()
-        cam_pil.save(buf, format='JPEG')
+        # PIL defaults to quality=75, which visibly bands the smooth gradients a
+        # colormap produces. The merged copy sent to the vision model is
+        # separate and stays small.
+        preview.save(buf, format='JPEG', quality=92, optimize=True)
         gradcam_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
 
         # Merge both frames into one image for the heatmap explanation
@@ -364,7 +387,7 @@ def index():
             return render_template("index.html", **view_context(lang))
 
         image_bytes = file.read()
-        image_data = base64.b64encode(image_bytes).decode("utf-8")
+        image_data = encode_preview(image_bytes)
 
         try:
             # Fire-and-forget: a storage failure must not cost the user their result.

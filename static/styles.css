@@ -176,7 +176,14 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 /* ------------------------------- results ------------------------------- */
 .results { padding: 24px var(--gutter) 28px; display: grid; gap: 22px; align-content: start; }
 
-.stage { display: grid; grid-template-columns: minmax(0, 1fr) 476px; gap: 28px; min-height: 0; }
+/* Grid and flex items default to min-width:auto, i.e. they refuse to shrink
+   below their content. The playlist rail's min-content is the full width of all
+   its cards (7 x 152 + gaps = 1160px), so without this it stretched the whole
+   grid and dragged the image frames out to 1160px inside a 390px phone. The
+   overflow-x on .rail__strip cannot fix that -- the constraint is on the items. */
+.results > *, .stage > *, .frames > *, .rail > * { min-width: 0; }
+
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) 476px; gap: 28px; min-height: 0; min-width: 0; }
 
 .frames { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; min-height: 0; }
 .frames__tabs { display: none; }
@@ -193,7 +200,9 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   border-radius: var(--r-xl); overflow: hidden; background: #0D0F13;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06);
 }
-.frame__media img { width: 100%; height: 100%; object-fit: cover; }
+/* contain, not cover: this is a before/after comparison, so cropping hides the
+   very regions the heatmap is there to point at. */
+.frame__media img { width: 100%; height: 100%; object-fit: contain; }
 
 .scale {
   position: absolute; inset-inline-end: 14px; top: 14px;
@@ -248,7 +257,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 [data-lang="ar"] .explain p { line-height: 1.72; }
 
 /* -------------------------------- rail -------------------------------- */
-.rail { display: flex; flex-direction: column; min-height: 0; }
+.rail { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .rail__head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .rail__title { display: flex; align-items: baseline; gap: 12px; }
 .rail__title h2 { margin: 0; font-family: var(--font-display); font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }

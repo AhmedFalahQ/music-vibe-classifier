@@ -126,6 +126,35 @@ with sync_playwright() as p:
     check("later steps advance over time", page.locator(".step.is-done").count() >= 1,
           f'{page.locator(".step.is-done").count()} done')
 
+    # --- nothing may be wider than the viewport (any state, any language) ---
+    print("\nhorizontal overflow:")
+    for label, context, vw, vh in [("results  390", results(), 390, 844),
+                                   ("results ar 390", results("ar"), 390, 844),
+                                   ("results 1440", results(), 1440, 900),
+                                   ("landing  390", ctx(), 390, 844)]:
+        pg = browser.new_page(viewport={"width": vw, "height": vh})
+        open(path, "w", encoding="utf-8").write(tpl.render(**context))
+        pg.goto("file://" + path)
+        pg.wait_for_timeout(300)
+        # .rail__strip and .frame__meta scroll sideways on purpose; everything
+        # else must fit. A grid/flex item with min-width:auto is the usual cause.
+        wide = pg.evaluate("""(vw) => {
+            const skip = ['rail__strip', 'frame__meta'];
+            const out = [];
+            document.querySelectorAll('body *').forEach(el => {
+                const c = (el.className && el.className.baseVal === undefined ? el.className : '').toString();
+                if (skip.some(s => c.includes(s))) return;
+                if (el.getBoundingClientRect().width > vw + 2)
+                    out.push(el.tagName.toLowerCase() + '.' + c.split(' ')[0] +
+                             '=' + Math.round(el.getBoundingClientRect().width));
+            });
+            return out.slice(0, 6);
+        }""", vw)
+        doc = pg.evaluate("document.documentElement.scrollWidth")
+        check(f"[{label}] no element exceeds the viewport", not wide, ", ".join(wide))
+        check(f"[{label}] page does not scroll sideways", doc <= vw + 2, f"scrollWidth={doc}")
+        pg.close()
+
     browser.close()
 
 shutil.rmtree(work, ignore_errors=True)
