@@ -125,5 +125,27 @@ check("no thread raised", not errs, str(errs)[:160])
 check("all 8 results correct under load", not bad and len(got) == 8,
       f"mismatched seeds={bad} returned={len(got)}")
 
+print("\n7. heatmap colours are not inverted")
+import cv2
+from PIL import Image as _PILImage
+_ov_src = NEW[NEW.index("def overlay_heatmap("):NEW.index("def merge_images_side_by_side(")]
+_ns = {"cv2": cv2, "np": np}
+exec(compile(_ov_src, "<app.py excerpt>", "exec"), _ns)
+overlay_heatmap = _ns["overlay_heatmap"]
+
+hm = np.zeros((8, 8), dtype=np.float32)
+hm[:, :4] = 1.0                                  # hot left half, cold right half
+rgb = overlay_heatmap(hm, _PILImage.new("RGB", (8, 8), (0, 0, 0)))
+hot, cold = rgb[4, 1].astype(int), rgb[4, 6].astype(int)
+check("high activation renders red, not blue", hot[0] > hot[2], f"R={hot[0]} B={hot[2]}")
+check("low activation renders blue, not red", cold[2] > cold[0], f"R={cold[0]} B={cold[2]}")
+check("output is uint8", rgb.dtype == np.uint8, str(rgb.dtype))
+check("output keeps the image size", rgb.shape == (8, 8, 3), str(rgb.shape))
+
+# a mid-grey photo must still be visible through the overlay, not blown to white
+grey = overlay_heatmap(hm, _PILImage.new("RGB", (8, 8), (128, 128, 128)))
+check("photo survives the blend (not saturated to white)", grey.max() < 255,
+      f"max channel {grey.max()}")
+
 print("\n" + ("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 raise SystemExit(1 if fails else 0)

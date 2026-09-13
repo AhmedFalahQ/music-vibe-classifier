@@ -17,7 +17,6 @@ import translations as tr
 import numpy as np
 import cv2
 import threading
-from openai import OpenAI
 
 app = Flask(__name__)
 
@@ -43,16 +42,26 @@ try:
     secrets=json.loads(get_secret("app/keys"))
     bucket_name=secrets.get("bucket_name")
     lambda_function_name=secrets.get("lambda_function_name")
-    OPENAI_API_KEY=dict.get(json.loads(get_secret("openai/api_key")),"OPENAI_API_KEY")
 except:
     # Fallback for local development
     YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
     bucket_name=os.getenv("bucket_name")
     lambda_function_name=os.getenv("lambda_function_name")
-    OPENAI_API_KEY=os.getenv("OPENAI_API_KEY")
 
-# OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Bedrock vision model, reached with the EC2 instance role -- no API key is
+# stored or fetched for it. The Converse API takes the same request shape for
+# every model on Bedrock, so moving to a different one (a Claude model, if the
+# Arabic explanations need more nuance than Nova Lite gives) is a config change
+# rather than a code change.
+#
+# "us." is the cross-region inference profile most accounts need; the in-region
+# id is "amazon.nova-lite-v1:0". Either way the model has to be enabled first
+# under Bedrock -> Model access.
+BEDROCK_REGION = os.getenv("BEDROCK_REGION", "us-east-1")
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "us.amazon.nova-lite-v1:0")
+BEDROCK_MAX_TOKENS = int(os.getenv("BEDROCK_MAX_TOKENS", "200"))
+
+bedrock_runtime = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
 
 PLAYLIST_MAP = {        # a map for playlist IDs of original and khaleeji songs for each genre
     "classical": {
@@ -90,7 +99,9 @@ def get_playlist_tracks(playlist_id, api_key, max_results=50):
     }
     
     try:
-        response = requests.get(url, params=params)
+        # Without a timeout a stalled connection hangs the whole request,
+        # which looks exactly like the app freezing on the analyzing screen.
+        response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         return [
             {
@@ -189,13 +200,22 @@ def generate_heatmap(input_tensor, class_idx):
     return (heatmap / peak).numpy()
 
 def overlay_heatmap(heatmap, img, alpha=0.5):
+    """Blend a Grad-CAM heatmap over the image. Returns an RGB array."""
     heatmap = cv2.resize(heatmap, (img.size[0], img.size[1]))
     heatmap = np.uint8(255 * heatmap)
-    heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET) # Colorize
+
+    # applyColorMap returns BGR, and this array is handed straight to PIL as
+    # RGB. Without the conversion JET comes out inverted: the hottest regions
+    # render blue and the coldest red, which is backwards from the legend in the
+    # UI and from what the explanation prompt tells the model to look for.
+    heatmap_color = cv2.cvtColor(
+        cv2.applyColorMap(heatmap, cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB)
+
     img = np.array(img)
-    overlay = heatmap_color * alpha + img # Blend
-    overlay = np.clip(overlay, 0, 255)
-    return np.uint8(overlay)
+    # Weighted blend. Adding the colormap on top of a full-strength image (the
+    # previous form) pushed bright areas to white and lost the photo underneath.
+    overlay = alpha * heatmap_color + (1 - alpha) * img
+    return np.uint8(np.clip(overlay, 0, 255))
 
 def merge_images_side_by_side(img1, img2):
     merged = Image.new("RGB", (img1.width + img2.width, max(img1.height, img2.height)))
@@ -208,38 +228,51 @@ def compress_image(image, max_size=(512, 512)):
     image.thumbnail(max_size)
     return image
 
-def get_gpt4_explanation(image, genre, lang="en", grad=False):
-    if grad is True:
+def get_vision_explanation(image, genre, lang="en", grad=False):
+    """Ask the Bedrock vision model to explain a prediction.
+
+    Returns None instead of raising: losing the caption should not cost the
+    user their genre, heatmap and playlists.
+    """
+    if grad:
         prompt = (
             "Look at this merged image of an original photo and its Grad-CAM heatmap. "
-            f"The model predicted the '{ genre }' music genre. Based on what parts of the image "
-            f"are most activated (red-hot in the heatmap), explain why the model might associate this with in 1-2 sentence '{ genre }'."
-            )
+            f"The model predicted the '{genre}' music genre. Based on which parts of the "
+            "image are most activated (red-hot in the heatmap), explain in 1-2 sentences "
+            f"why the model might associate this with '{genre}'."
+        )
     else:
         prompt = (
-            f"Describe this image in one sentence, then explain why it fits the music genre '{genre}'in one sentence")
+            "Describe this image in one sentence, then explain in one sentence why it "
+            f"fits the music genre '{genre}'."
+        )
 
-    # Ask for the answer in the language the page is being viewed in.
+    # Answer in whichever language the page is being viewed in.
     prompt = f"{prompt} {tr.PROMPT_LANGUAGE.get(lang, tr.PROMPT_LANGUAGE['en'])}"
 
     buf = io.BytesIO()
-    image.save(buf, format='JPEG')
-    img_b64 = base64.b64encode(buf.getvalue()).decode()
+    image.save(buf, format="JPEG")
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {
+    try:
+        response = bedrock_runtime.converse(
+            modelId=BEDROCK_MODEL_ID,
+            messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-                ]
-            }
-        ],
-        max_tokens=150
-    )
-    return response.choices[0].message.content
+                    # Converse takes raw bytes -- no base64 wrapper needed.
+                    {"image": {"format": "jpeg", "source": {"bytes": buf.getvalue()}}},
+                    {"text": prompt},
+                ],
+            }],
+            inferenceConfig={"maxTokens": BEDROCK_MAX_TOKENS, "temperature": 0.3},
+        )
+        return response["output"]["message"]["content"][0]["text"].strip()
+    except Exception as e:
+        # AccessDeniedException here almost always means this model id has not
+        # been enabled under Bedrock -> Model access for this account/region.
+        print(f"Bedrock explanation failed ({BEDROCK_MODEL_ID}): {e}")
+        return None
+
 
 def build_distribution(probs, predicted_idx, lang, top_n=3):
     """Top-N classes as rows for the confidence bars.
@@ -285,12 +318,12 @@ def predict(image_bytes, lang="en"):
         cam_pil.save(buf, format='JPEG')
         gradcam_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
 
-        # Merge for GPT explanation
+        # Merge both frames into one image for the heatmap explanation
         genre_for_prompt = tr.GENRE_LABELS.get(lang, tr.GENRE_LABELS["en"]).get(
             predicted_label, predicted_label)
         merged = merge_images_side_by_side(image, cam_pil)
-        g_explanation = get_gpt4_explanation(compress_image(merged), genre_for_prompt, lang, grad=True)
-        o_explanation = get_gpt4_explanation(compress_image(image), genre_for_prompt, lang)
+        g_explanation = get_vision_explanation(compress_image(merged), genre_for_prompt, lang, grad=True)
+        o_explanation = get_vision_explanation(compress_image(image), genre_for_prompt, lang)
         return predicted_label, gradcam_base64, g_explanation, o_explanation, distribution
     except Exception as e:
         print("Prediction error:", e)

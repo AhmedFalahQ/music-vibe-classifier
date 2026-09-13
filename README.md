@@ -2,19 +2,21 @@
 
 Image2Genre predicts the music genre that best matches an image’s visual vibe using a deep learning model trained with Amazon SageMaker. It then recommends curated YouTube playlists (both Global and Khaleeji) based on that genre.
 ---
-It also uses Grad-CAM and GPT-4o to provide human-like explanations for its predictions.
+It also uses Grad-CAM and a vision model on Amazon Bedrock to provide human-like explanations for its predictions.
 ---
 
 ## 🚀 Features
 
 * 🖼️ Upload an image → get a predicted **music genre**
 * 🔥 View a **Grad-CAM heatmap** highlighting areas the model focused on
-* 🧠 Get human-readable explanations via **GPT-4o** for both original and heatmapped images
+* 🧠 Get human-readable explanations from a **vision model on Amazon Bedrock** for both the original and heatmapped images
+* 🌍 **Bilingual interface (English / Arabic)** with full RTL layout; explanations are generated in the language you are viewing
 * 🤖 **ResNet34 model** trained in two phases (frozen & fine-tuned) using **SageMaker**
 * 📆 Predictions served via a **Flask app** on **EC2 Spot instance**
 * 🎵 Automatically fetches **YouTube playlists** for both global and local (Khaleeji) musical tastes
 * ☁️ Uploaded images are sent to **AWS Lambda**, which stores them in **S3** for future retraining
 * 🔐 Uses **AWS Secrets Manager** for secure API key and resources variables and config management
+* 🪪 Bedrock is reached with the **EC2 instance role** — no model API key is stored anywhere
 * ✨ Modern, responsive UI using CSS and `<iframe>` playlist previews
 
 ---
@@ -78,12 +80,32 @@ music-vibe-classifier/
 
 ---
 
-## 🧠 GPT-4o Explanations
+## 🧠 Vision-Model Explanations (Amazon Bedrock)
 * **Original Image Caption + Justification**
-   The app uses GPT-4o to explain how the original image visually matches the predicted music genre.
+   Explains how the original image visually matches the predicted music genre.
 * **Grad-CAM Explanation**
-   A second GPT-4o call provides reasoning based on the heatmap, highlighting what the model "focused on" and why that supports the genre.
-* 💬 **Responses are structured using prompt engineering and returned in markdown for clarity.**
+   A second call reasons over the heatmap, highlighting what the model "focused on" and why that supports the genre.
+* 🌍 Both are generated in the interface language (English or Arabic).
+* 💬 **Responses are structured using prompt engineering.**
+
+### Configuration
+
+Calls go through Bedrock's **Converse API**, which takes the same request shape for
+every model on Bedrock — so switching models is a config change, not a code change:
+
+| Variable | Default | Notes |
+| ---------------------- | -------------------------- | ------------------------------------------------- |
+| `BEDROCK_MODEL_ID`     | `us.amazon.nova-lite-v1:0` | `us.` is the cross-region inference profile; the in-region id is `amazon.nova-lite-v1:0` |
+| `BEDROCK_REGION`       | `us-east-1`                | Must be a region where the model is available     |
+| `BEDROCK_MAX_TOKENS`   | `200`                      | Explanations are 1–2 sentences                    |
+
+The model must first be enabled under **Bedrock → Model access**, and the instance
+role needs `bedrock:InvokeModel` on it. If a call fails the app logs the reason and
+renders without that explanation — the genre, heatmap and playlists still appear.
+
+> **Note on Arabic:** Nova Lite is a small, low-cost model. If the Arabic
+> explanations read poorly, point `BEDROCK_MODEL_ID` at a Claude model on Bedrock
+> instead — no code change required.
 
 ---
 
@@ -95,6 +117,7 @@ music-vibe-classifier/
 | **Lambda**          | Stores uploaded images in S3                   |
 | **S3**              | Stores images for future retraining            |
 | **EC2 (Spot)**      | Hosts the Flask app for cost-efficient serving |
+| **Bedrock**         | Vision model for the explanations (instance-role auth) |
 | **Secrets Manager** | Secure API key management (e.g., YouTube key)  |
 | **NGINX**           | Serves Flask app via reverse proxy             |
 
@@ -105,7 +128,7 @@ music-vibe-classifier/
 1. User uploads a photo.
 2. Flask app predicts genre using `model.pth`.
 3. Grad-CAM heatmap is generated.
-4. Two GPT-4o explanations are returned (original + heatmap).
+4. Two vision-model explanations are returned (original + heatmap), in the interface language.
 5. YouTube playlists for Original + Khaleeji are shown.
 6. The image is sent to Lambda → stored in S3.
 7. The user can listen via embedded YouTube previews.
@@ -115,7 +138,6 @@ music-vibe-classifier/
 ## 📊 Future Ideas
 
 * ⏳ Auto-trigger SageMaker retraining from new S3 images
-* 💡 Multilingual interface
 * 📊 Track prediction analytics / user feedback
 * 🌟 Upload feedback to DynamoDB for model tuning
 

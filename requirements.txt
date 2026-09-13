@@ -40,5 +40,6 @@ requests>=2.32,<3
 # local .env fallback when Secrets Manager is unreachable
 python-dotenv>=1.0,<2
 
-# vision explanations
-openai>=1.40,<2
+# Vision explanations run on Amazon Bedrock via the Converse API, which boto3
+# already provides -- no separate SDK and no API key (the EC2 instance role is
+# the credential). Needs bedrock:InvokeModel on the configured model id.
