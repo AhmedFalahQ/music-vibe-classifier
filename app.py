@@ -99,7 +99,9 @@ def get_playlist_tracks(playlist_id, api_key, max_results=50):
     }
     
     try:
-        response = requests.get(url, params=params)
+        # Without a timeout a stalled connection hangs the whole request,
+        # which looks exactly like the app freezing on the analyzing screen.
+        response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         return [
             {
@@ -198,13 +200,22 @@ def generate_heatmap(input_tensor, class_idx):
     return (heatmap / peak).numpy()
 
 def overlay_heatmap(heatmap, img, alpha=0.5):
+    """Blend a Grad-CAM heatmap over the image. Returns an RGB array."""
     heatmap = cv2.resize(heatmap, (img.size[0], img.size[1]))
     heatmap = np.uint8(255 * heatmap)
-    heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET) # Colorize
+
+    # applyColorMap returns BGR, and this array is handed straight to PIL as
+    # RGB. Without the conversion JET comes out inverted: the hottest regions
+    # render blue and the coldest red, which is backwards from the legend in the
+    # UI and from what the explanation prompt tells the model to look for.
+    heatmap_color = cv2.cvtColor(
+        cv2.applyColorMap(heatmap, cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB)
+
     img = np.array(img)
-    overlay = heatmap_color * alpha + img # Blend
-    overlay = np.clip(overlay, 0, 255)
-    return np.uint8(overlay)
+    # Weighted blend. Adding the colormap on top of a full-strength image (the
+    # previous form) pushed bright areas to white and lost the photo underneath.
+    overlay = alpha * heatmap_color + (1 - alpha) * img
+    return np.uint8(np.clip(overlay, 0, 255))
 
 def merge_images_side_by_side(img1, img2):
     merged = Image.new("RGB", (img1.width + img2.width, max(img1.height, img2.height)))
