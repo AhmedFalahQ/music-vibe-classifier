@@ -119,14 +119,35 @@ def get_playlist_tracks(playlist_id, api_key, max_results=50):
         return []
 
 # Model Loading
-model = models.resnet34(pretrained=True)
+# Paths are resolved against this file, not the working directory, so the app
+# does not depend on where it was launched from.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "model.pth")
+ENCODER_PATH = os.path.join(BASE_DIR, "label_encoder.pkl")
+
+for _artifact in (MODEL_PATH, ENCODER_PATH):
+    if not os.path.isfile(_artifact):
+        # Both are gitignored, so a fresh deploy that skipped fetching them
+        # fails here. Say which file, rather than dying inside torch.
+        raise RuntimeError(
+            f"Required model artifact is missing: {_artifact}. "
+            "Copy model.pth and label_encoder.pkl into the app directory "
+            "(they are gitignored and are not part of the checkout)."
+        )
+
+# weights=None, NOT pretrained=True. The ImageNet weights are overwritten by
+# load_state_dict on the next line, so downloading them is pure waste -- and on
+# a multi-worker server every worker races to fetch the same ~87MB file into
+# ~/.cache/torch on first boot, which makes them all fail to start. This also
+# removes any need for outbound internet at import time.
+model = models.resnet34(weights=None)
 model.fc = torch.nn.Sequential(
     torch.nn.Dropout(0.5),
     torch.nn.Linear(model.fc.in_features, 5)
 )
-model.load_state_dict(torch.load("model.pth", map_location=torch.device("cpu")))
+model.load_state_dict(torch.load(MODEL_PATH, map_location=torch.device("cpu")))
 model.eval()
-label_encoder = joblib.load("label_encoder.pkl")
+label_encoder = joblib.load(ENCODER_PATH)
 
 # Image preprocessing 
 preprocess = transforms.Compose([
