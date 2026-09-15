@@ -1,0 +1,41 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "VisionExplanations",
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0",
+        "arn:aws:bedrock:*:*:inference-profile/us.amazon.nova-lite-v1:0"
+      ]
+    },
+    {
+      "Sid": "ReadAppSecrets",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": [
+        "arn:aws:secretsmanager:*:*:secret:youtube/api_key-*",
+        "arn:aws:secretsmanager:*:*:secret:app/keys-*"
+      ]
+    },
+    {
+      "Sid": "ArchiveUploads",
+      "Effect": "Allow",
+      "Action": "lambda:InvokeFunction",
+      "Resource": "arn:aws:lambda:*:*:function:REPLACE_ME_LAMBDA_NAME"
+    },
+    {
+      "Sid": "FetchModelArtifacts",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::REPLACE_ME_BUCKET/models/*"
+    },
+    {
+      "Sid": "ClaimElasticIPOnBoot",
+      "Effect": "Allow",
+      "Action": "ec2:AssociateAddress",
+      "Resource": "*"
+    }
+  ]
+}
