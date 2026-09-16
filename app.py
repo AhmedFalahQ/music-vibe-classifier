@@ -9,14 +9,24 @@ import json
 from torchvision import models, transforms
 import torch
 import joblib
-import imageio.v3 as iio
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from flask import Flask, request, render_template
 from utils.aws_utils import invoke_lambda_to_store_image
+from utils.images import load_image
 import translations as tr
 import numpy as np
 import cv2
+import logging
 import threading
+
+# Logs go to stderr, which gunicorn captures and systemd routes to the
+# journal. stderr is not block-buffered, so lines appear as they happen --
+# print() went to stdout and could sit in a buffer for a minute.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger("image2genre")
 
 app = Flask(__name__)
 
@@ -33,7 +43,7 @@ def get_secret(secret_name):
         response = secrets_client.get_secret_value(SecretId=secret_name)
         return response['SecretString']
     except Exception as e:
-        print(f"Error fetching secret: {str(e)}")
+        logger.error("Could not read secret %s: %s", secret_name, e)
         raise
 
 # Load keys from AWS Secrets Manager
@@ -115,7 +125,7 @@ def get_playlist_tracks(playlist_id, api_key, max_results=50):
             for item in response.json().get("items", [])
         ]
     except Exception as e:
-        print(f"Error fetching playlist {playlist_id}: {str(e)}")
+        logger.warning("Playlist fetch failed for %s: %s", playlist_id, e, exc_info=True)
         return []
 
 # Model Loading
@@ -164,19 +174,6 @@ TARGET_LAYER = model.layer4[2].conv2  # The last conv layer in resnet34
 # the backward pass have to be serialised: backward() also accumulates into the
 # model's parameter .grad buffers, which two threads cannot do at once.
 _cam_lock = threading.Lock()
-
-def load_image(image_bytes):
-    try:
-        # Try with Pillow first
-        return Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    except UnidentifiedImageError:
-        try:
-            # Try using imageio supports HEIC with pyav (Mobile pictures)
-            img_array = iio.imread(image_bytes)
-            return Image.fromarray(img_array).convert("RGB")
-        except Exception as err:
-            print(f"HEIC fallback failed: {err}")
-            raise ValueError("Unsupported or corrupt image format.")
 
 def generate_heatmap(input_tensor, class_idx):
     """Grad-CAM over the last conv layer, as an H x W float array in [0, 1]."""
@@ -258,7 +255,7 @@ def encode_preview(image_bytes, max_edge=1600, quality=88):
         img.save(buf, format="JPEG", quality=quality, optimize=True)
         return base64.b64encode(buf.getvalue()).decode("utf-8")
     except Exception as e:
-        print(f"Preview encode failed, inlining the original: {e}")
+        logger.warning("Preview encode failed; inlining the original", exc_info=True)
         return base64.b64encode(image_bytes).decode("utf-8")
 
 
@@ -309,7 +306,7 @@ def get_vision_explanation(image, genre, lang="en", grad=False):
     except Exception as e:
         # AccessDeniedException here almost always means this model id has not
         # been enabled under Bedrock -> Model access for this account/region.
-        print(f"Bedrock explanation failed ({BEDROCK_MODEL_ID}): {e}")
+        logger.exception("Bedrock explanation failed (%s)", BEDROCK_MODEL_ID)
         return None
 
 
@@ -370,7 +367,7 @@ def predict(image_bytes, lang="en"):
         o_explanation = get_vision_explanation(compress_image(image), genre_for_prompt, lang)
         return predicted_label, gradcam_base64, g_explanation, o_explanation, distribution
     except Exception as e:
-        print("Prediction error:", e)
+        logger.exception("Prediction failed")
         return None, None, None, None, []
 
 def view_context(lang, **extra):
@@ -444,7 +441,7 @@ def index():
             ))
 
         except Exception as e:
-            print("Request error:", e)
+            logger.exception("Request failed")
             return render_template("index.html", **view_context(
                 lang, error=str(e), image_data=image_data))
 
