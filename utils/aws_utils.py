@@ -1,21 +1,13 @@
 import boto3
 import base64
 import json
+import logging
 import uuid
 import io
-from PIL import Image, UnidentifiedImageError
-import imageio.v3 as iio
 
-def load_image(image_bytes):
-    """Try Pillow first, fallback to imageio for HEIC support (Mobile Pictures)."""
-    try:
-        return Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    except UnidentifiedImageError:
-        try:
-            img_array = iio.imread(image_bytes)
-            return Image.fromarray(img_array).convert("RGB")
-        except Exception as e:
-            raise ValueError(f"Unsupported image format: {e}")
+from utils.images import load_image
+
+logger = logging.getLogger(__name__)
 
 def invoke_lambda_to_store_image(image_bytes, bucket_name, lambda_function_name, region="us-east-1"):
     """Invoke AWS Lambda to store the uploaded image in S3."""
@@ -30,7 +22,7 @@ def invoke_lambda_to_store_image(image_bytes, bucket_name, lambda_function_name,
         resized_bytes = buffer.read()
         encoded_image = base64.b64encode(resized_bytes).decode("utf-8")
     except Exception as e:
-        print(f"❌ Failed to process image: {e}")
+        logger.warning("Could not process the upload for archiving", exc_info=True)
         return
 
     filename = f"uploads/{uuid.uuid4()}.jpg" # Using uuid to create unique name
@@ -46,6 +38,6 @@ def invoke_lambda_to_store_image(image_bytes, bucket_name, lambda_function_name,
             InvocationType="Event",
             Payload=json.dumps(payload)
         )
-        print("✅ Lambda invoked to store image in S3.")
+        logger.info("Lambda invoked to archive the upload as %s", filename)
     except Exception as e:
-        print(f"❌ Failed to invoke Lambda: {e}")
+        logger.warning("Failed to invoke the archiving Lambda", exc_info=True)

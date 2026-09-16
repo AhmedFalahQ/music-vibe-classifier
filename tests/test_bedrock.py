@@ -24,7 +24,9 @@ body = SRC[SRC.index("def get_vision_explanation("):SRC.index("def build_distrib
 
 bedrock = boto3.client("bedrock-runtime", region_name="us-east-1",
                        aws_access_key_id="x", aws_secret_access_key="y")
-ns = {"io": io, "tr": tr, "bedrock_runtime": bedrock,
+import logging
+# app.py defines `logger` at module level; the excerpt needs it in scope.
+ns = {"io": io, "tr": tr, "bedrock_runtime": bedrock, "logger": logging.getLogger("test"),
       "BEDROCK_MODEL_ID": "us.amazon.nova-lite-v1:0", "BEDROCK_MAX_TOKENS": 200}
 exec(compile(body, "<app.py excerpt>", "exec"), ns)
 explain = ns["get_vision_explanation"]

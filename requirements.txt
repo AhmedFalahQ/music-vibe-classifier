@@ -23,7 +23,11 @@ numpy>=1.26,<3
 pillow>=10.2,<13
 opencv-python-headless>=4.10,<6
 imageio>=2.34,<3
-av>=12,<19               # imageio's pyav plugin - the HEIC fallback in load_image()
+av>=12,<19               # imageio's pyav plugin - last-resort decode fallback
+
+# Phones shoot HEIC and Pillow has no native HEIF support, so without this every
+# iPhone upload fails to decode. utils/images.py registers the opener at import.
+pillow-heif>=1.0,<2
 
 # label_encoder.pkl is a pickled sklearn LabelEncoder, so scikit-learn must be
 # importable at runtime even though the app never calls it directly. Pin this to
