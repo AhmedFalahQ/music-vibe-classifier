@@ -1,0 +1,24 @@
+[Unit]
+Description=Image2Genre
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=appuser
+WorkingDirectory=/opt/image2genre
+Environment="BEDROCK_REGION=us-east-1"
+# Logging writes to stderr so this is belt-and-braces, but it also keeps any
+# stray print() visible in the journal immediately instead of buffered.
+Environment="PYTHONUNBUFFERED=1"
+# Two workers: each loads its own torch + model (~1.5GB), so this wants a
+# t3.large. On a t3.medium use --workers 1 --threads 8 instead.
+# 120s because one request is inference plus two Bedrock calls; the default 30
+# is not enough.
+ExecStart=/opt/image2genre/.venv/bin/gunicorn \
+          --workers 2 --threads 4 --timeout 120 \
+          --bind 127.0.0.1:5000 app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

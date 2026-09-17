@@ -1,0 +1,17 @@
+[Unit]
+Description=Associate the Elastic IP with this instance
+After=network-online.target
+Wants=network-online.target
+Before=nginx.service
+
+[Service]
+# oneshot rather than user data: user data runs once per INSTANCE, so it does
+# not re-run on a stop/start and depends on cloud-init state surviving an AMI
+# bake. This runs on every boot. Restart= is not valid with Type=oneshot, so
+# the retry loop lives in the script.
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/associate-eip.sh
+
+[Install]
+WantedBy=multi-user.target
