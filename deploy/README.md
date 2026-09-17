@@ -112,6 +112,27 @@ browser hitting `http://image2genre-origin.example.dev` gets upgraded to port
 443, where nothing is listening, and reports a timeout that looks like a server
 fault.
 
+## If verify.sh fails
+
+**`/ served by the app` reports the nginx welcome page.** Check which stack is
+answering:
+
+```bash
+curl -s -4 localhost/health     # ok
+curl -s -6 localhost/health     # should also be ok
+nginx -T 2>/dev/null | grep -c image2genre   # non-zero: the config is loaded
+```
+
+Amazon Linux's stock `nginx.conf` binds `listen [::]:80` as well as IPv4, and
+`curl localhost` resolves to `::1` first, so a config declaring only IPv4 leaves
+IPv6 requests hitting the welcome page. `nginx-image2genre.conf` declares both.
+If nginx fails to start because IPv6 is disabled on the host, drop the
+`listen [::]:80` line and re-run.
+
+**`label encoder classes match` fails but the genres look right.** Under numpy 2
+those entries print as `np.str_('classical')`. The comparison uses
+`map(str, ...)`; a failure here means the values genuinely differ, not the repr.
+
 ## Updating a running instance
 
 ```bash

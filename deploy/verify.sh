@@ -18,22 +18,31 @@ systemctl is-enabled --quiet associate-eip && ok "associate-eip enabled at boot"
 
 echo
 echo "http"
-[ "$(curl -s localhost/health)" = "ok" ] && ok "/health" || bad "/health" "$(curl -s localhost/health | head -c 60)"
-title=$(curl -s localhost/ | grep -o '<title>[^<]*</title>' || true)
+[ "$(curl -s -4 localhost/health)" = "ok" ] && ok "/health" || bad "/health" "$(curl -s -4 localhost/health | head -c 60)"
+title=$(curl -s -4 localhost/ | grep -o '<title>[^<]*</title>' || true)
 case "$title" in
     *Image2Genre*) ok "/ served by the app  ($title)" ;;
     *)             bad "/ served by the app" "got: ${title:-nothing} -- nginx default block is probably winning" ;;
 esac
-[ "$(curl -s 'localhost/?lang=ar' | grep -c 'dir="rtl"')" -ge 1 ] && ok "?lang=ar switches to RTL" || bad "?lang=ar switches to RTL"
-[ "$(curl -s -o /dev/null -w '%{http_code}' localhost/static/styles.css)" = "200" ] \
+[ "$(curl -s -4 'localhost/?lang=ar' | grep -c 'dir="rtl"')" -ge 1 ] && ok "?lang=ar switches to RTL" || bad "?lang=ar switches to RTL"
+[ "$(curl -s -4 -o /dev/null -w '%{http_code}' localhost/static/styles.css)" = "200" ] \
     && ok "/static/ served" || bad "/static/ served" "page would render unstyled"
+
+ipv6=$(curl -s -6 --max-time 5 localhost/health 2>/dev/null || echo "")
+case "$ipv6" in
+    ok) ok "/health over IPv6" ;;
+    "") ok "/health over IPv6 (no IPv6 loopback; not required)" ;;
+    *)  bad "/health over IPv6" "the stock nginx block is answering on ::1" ;;
+esac
 
 echo
 echo "artifacts"
 [ -f "$APP_DIR/model.pth" ] && ok "model.pth present" || bad "model.pth present"
 [ -f "$APP_DIR/label_encoder.pkl" ] && ok "label_encoder.pkl present" || bad "label_encoder.pkl present"
+# map(str, ...) matters: under numpy 2 these are np.str_ objects whose repr
+# carries the type name, so a plain list comparison fails on a correct encoder.
 classes=$(sudo -u "${APP_USER:-appuser}" "$APP_DIR/.venv/bin/python" -c \
-    "import joblib;print(sorted(joblib.load('$APP_DIR/label_encoder.pkl').classes_))" 2>/dev/null || echo ERROR)
+    "import joblib;print(sorted(map(str, joblib.load('$APP_DIR/label_encoder.pkl').classes_)))" 2>/dev/null || echo ERROR)
 expected="['classical', 'electronic', 'jazz', 'pop', 'rock']"
 [ "$classes" = "$expected" ] && ok "label encoder classes match the app" \
     || bad "label encoder classes match the app" "got $classes -- predictions would be mislabelled"
